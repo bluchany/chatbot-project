@@ -1,0 +1,15 @@
+[theme]
+# 기본 색상 (버튼, 링크 등)
+primaryColor="#2E6EF7"
+
+# 전체 배경색
+backgroundColor="#FFFFFF"
+
+# 사이드바 등 보조 배경색
+secondaryBackgroundColor="#F0F2F6"
+
+# 기본 글자색
+textColor="#262730"
+
+# 폰트 스타일 ('sans serif', 'serif', 'monospace' 중 선택)
+font="sans serif"
