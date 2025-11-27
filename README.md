@@ -87,7 +87,7 @@ Bash
     docker-compose run --rm chatbot_api python index.py
 
 
-## 📂 프로젝트 구조dobong-welfare-bot/
+### 📂 프로젝트 구조dobong-welfare-bot/
 ├── main.py             # FastAPI 메인 서버 (엔드포인트)
 ├── worker.py           # 백그라운드 작업 처리 (검색, 랭킹 로직 핵심)
 ├── utils.py            # LLM 호출, 검색어 확장, 텍스트 가공 등 유틸리티
@@ -105,3 +105,4 @@ Bash
 ### 📬 ContactDeveloper: Lee Chan-young (Dobong Welfare Center for the Disabled)
 Email: (bluchany1129@gmail.com)
 GitHub: (https://github.com/bluchany/dobong-welfare-bot.git)
+
