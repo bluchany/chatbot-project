@@ -1,193 +1,228 @@
+# main.py (Google Forms Version - Clean & Light)
 import os
-import requests
 import json
-from fastapi import FastAPI
-from notion_client import Client
-from pydantic import BaseModel, Field
-from typing import List, Optional
+import uuid
+import logging
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from typing import List, Dict, Any
+from dotenv import load_dotenv
 
-# --- ⚙️ 1. 기본 설정 ---
-NOTION_KEY = os.getenv("NOTION_KEY") #수정
-HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY") # 수정
+# [최적화] utils import 최상단 배치
+from utils import (
+    redis_client,
+    MAIN_ANSWER_CACHE_KEY,
+    extract_info_from_question,
+    notion,                     
+    LLM_MODEL,
+    DATABASE_IDS,
+    get_supabase_pages_by_ids, 
+    format_search_results      
+)
 
-DATABASE_IDS = {
-    "의료재활": "2738ade5021080b786b0d8b0c07c1ea2",
-    "교육보육": "2738ade5021080339203d7148d7d943b",
-    "가족지원": "2738ade502108041a4c7f5ec4c3b8413",
-    "돌봄양육": "2738ade5021080cf842df820fdbeb709",
-    "복지": "2738ade5021080579e5be527ff1e80b2"
-}
-NOTION_PROPERTY_NAMES = {
-    "title": "사업명", "category": "분류", "sub_category": "대상 특성",
-    "start_age": "시작 연령", "end_age": "종료 연령", "support_detail": "상세 지원 내용",
-    "contact": "문의처", "url1": "관련 홈페이지 1", "url2": "관련 홈페이지 2",
-    "url3": "관련 홈페이지 3", "extra_req": "추가 자격요건"
-}
-# ---------------------
+# ------------------------------------
 
-# ENHANCEMENT: 마지막 검색 결과를 저장할 전역 변수 (세션 상태 관리)
-chat_session = {
-    "last_results": [],
-    "shown_count": 0
-}
+# 로깅 설정
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-notion = Client(auth=NOTION_KEY)
+load_dotenv()
+ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY", "your_strong_admin_password_here")
+
 app = FastAPI()
 
-# --- 📥 2. 요청 모델 정의 ---
-class SearchRequest(BaseModel):
-    age: Optional[int] = None
-    category: Optional[str] = None
-    sub_category: Optional[str] = None
-    intent: Optional[str] = None # NEW: "더 보여줘" 와 같은 의도를 받기 위한 필드
+# --- CORS 설정 ---
+origins = [
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "*"  # 배포 시 실제 도메인으로 변경 권장
+]
+app.add_middleware(
+    CORSMiddleware, 
+    allow_origins=origins, 
+    allow_credentials=True, 
+    allow_methods=["*"], 
+    allow_headers=["*"]
+)
 
+# [삭제됨] 불필요한 SessionMiddleware 제거 (Stateless 지향)
+
+# --- 정적 파일 서빙 ---
+if os.path.exists("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# --- Redis 키 이름 ---
+JOB_QUEUE_KEY = "chatbot:job_queue"
+JOB_RESULTS_KEY = "chatbot:job_results"
+
+# --- 요청 모델 ---
 class ChatRequest(BaseModel):
     question: str
+    last_result_ids: List[str] = [] 
+    shown_count: int = 0
+    chat_history: List[Dict[str, Any]] = [] 
 
-# --- 🧠 3. 핵심 로직 함수들 ---
+# [삭제됨] FeedbackRequest 모델 삭제 (Google Forms 사용)
 
-def extract_info_from_question(question: str) -> dict:
-    API_URL = "https://api-inference.huggingface.co/models/meta-llama/Meta-Llama-3-8B-Instruct"
-    headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}", "Content-Type": "application/json"}
-    
-    # ENHANCEMENT: 사용자의 의도(intent)를 파악하는 규칙 추가
-    prompt = f"""
-    [INST]
-    You are a highly skilled specialist in analyzing user queries. Your task is to extract 'age (in months)', 'category', 'sub_category', and 'intent' from the user's question and return it ONLY as a valid JSON object.
+# --- API 엔드포인트 ---
 
-    # Rules:
-    - If the user asks to see more results (e.g., "더 보여줘", "다음"), set the 'intent' to "show_more".
-    - Convert Korean age units like '살' or '돌' to months. (e.g., '두 돌' -> 24, '세 살' -> 36).
-    - 'age' must be an integer.
-    - 'category' must be one of: ["의료재활", "교육보육", "가족지원", "돌봄양육", "복지"].
-    - 'sub_category' must be one of: ["장애/발달지연", "저소득", "임산부", "보호자", "다문화", "다자녀", "한부모"].
-    - If a value is not found, use null.
-    - Your output MUST be ONLY the JSON object itself.
-
-    # Question: "{question}"
-    [/INST]
-    ```json
-    """
-    
-    payload = {"inputs": prompt, "parameters": {"max_new_tokens": 150, "return_full_text": False}}
-
-    try:
-        response = requests.post(API_URL, headers=headers, json=payload)
-        response.raise_for_status()
-        response_text = response.json()[0]['generated_text']
-        json_block_start = response_text.find('{')
-        json_block_end = response_text.rfind('}') + 1
-        
-        if json_block_start != -1 and json_block_end != -1:
-            json_string = response_text[json_block_start:json_block_end]
-            extracted_info = json.loads(json_string)
-            print(f"LLM 추출 정보: {extracted_info}")
-            return extracted_info
-        else: return {}
-    except Exception as e:
-        print(f"LLM 호출 또는 JSON 파싱 오류: {e}")
-        return {}
-
-def process_age_filter(age_in_months: int):
-    # (이전과 동일)
-    start_age_prop, end_age_prop = NOTION_PROPERTY_NAMES["start_age"], NOTION_PROPERTY_NAMES["end_age"]
-    return [{"property": start_age_prop, "number": {"less_than_or_equal_to": age_in_months}},
-            {"property": end_age_prop, "number": {"greater_than_or_equal_to": age_in_months}}]
-
-def format_notion_results(pages: list, total_count: int, start_index: int) -> str:
-    if not pages:
-        return "표시할 추가 정보가 없어요."
-
-    found_items = []
-    for page in pages: # 이미 잘라진 페이지 목록을 받으므로 [:3] 제거
-        properties = page.get("properties", {})
-        # ... (이전과 동일한 정보 추출 로직)
-        def get_rich_text(prop_name):
-            prop = properties.get(prop_name, {}).get("rich_text", [{}])
-            return prop[0].get("plain_text", "").strip() if prop else ""
-        title = properties.get(NOTION_PROPERTY_NAMES["title"], {}).get("title", [{}])[0].get("plain_text", "")
-        category = properties.get(NOTION_PROPERTY_NAMES["category"], {}).get("select", {}).get("name", "")
-        target_prop = properties.get(NOTION_PROPERTY_NAMES["sub_category"], {}).get("multi_select", [])
-        targets = [item.get("name") for item in target_prop]
-        targets_text = ", ".join(targets) if targets else ""
-        support_detail, contact, extra_req = (get_rich_text(NOTION_PROPERTY_NAMES[key]) for key in ["support_detail", "contact", "extra_req"])
-        url1, url2, url3 = (properties.get(NOTION_PROPERTY_NAMES[f"url{i}"], {}).get("url", "") for i in range(1, 4))
-        urls = [link for link in [url1, url2, url3] if link]
-        urls_text = "\n".join(urls) if urls else ""
-        item_text = f"[{category}]\n**{title}**"
-        if targets_text: item_text += f"\n\n👥 **대상:** {targets_text}"
-        if support_detail: item_text += f"\n\n📝 **지원 내용:**\n{support_detail}"
-        if extra_req: item_text += f"\n\n📌 **추가 자격요건:**\n{extra_req}"
-        if contact: item_text += f"\n\n📞 **문의처:** {contact}"
-        if urls_text: item_text += f"\n\n🌐 **홈페이지:**\n{urls_text}"
-        found_items.append(item_text)
-
-    # ENHANCEMENT: 헤더 메시지를 상황에 맞게 변경
-    end_index = start_index + len(found_items)
-    header = f"총 {total_count}개의 정보 중 {start_index + 1}번째부터 {end_index}번째 결과를 보여드릴게요."
-    separator = "\n\n---\n\n"
-    final_text = header + separator + separator.join(found_items)
-    
-    # 남은 결과가 더 있는지 알려주는 안내 문구 추가
-    if total_count > end_index:
-        final_text += f"\n\n---\n더 보려면 '더 보여줘'라고 말씀해주세요. (남은 결과: {total_count - end_index}개)"
-    else:
-        final_text += "\n\n---\n📋 모든 결과를 보여드렸어요."
-    
-    return final_text
-
-# --- 🚀 4. API 엔드포인트 ---
 @app.get("/")
-def read_root():
-    return {"status": "챗봇 서버가 정상적으로 실행 중입니다."}
+async def read_root():
+    if os.path.exists('static/index.html'):
+        return FileResponse('static/index.html')
+    return {"message": "Server is running. (No index.html found)"}
 
-# @app.post("/search") 는 /chat 내부로 통합
+@app.post("/admin/clear_cache")
+def clear_all_caches(secret: str = Query(None)):
+    if secret != ADMIN_SECRET_KEY: raise HTTPException(status_code=401, detail="Unauthorized")
+    try:
+        logger.warning("--- 🔒 관리자 요청: Redis 캐시 초기화 ---")
+        keys_to_delete = []
+        for key_pattern in ["extract:*", "summary:*", "chatbot:*"]: 
+            keys_to_delete.extend(redis_client.keys(key_pattern))
+        
+        if keys_to_delete:
+            redis_client.delete(*keys_to_delete)
+        
+        return {"status": "Redis 캐시 삭제 완료", "deleted_keys": len(keys_to_delete)}
+    except Exception as e:
+        logger.error(f"캐시 삭제 오류: {e}")
+        raise HTTPException(status_code=500, detail=f"오류: {e}")
 
 @app.post("/chat")
-def chat_with_bot(request: ChatRequest):
-    extracted_info = extract_info_from_question(request.question)
-    
-    # 1. "더 보여줘" 의도 처리
-    if extracted_info.get("intent") == "show_more":
-        if not chat_session["last_results"]:
-            return {"answer": "죄송해요, 먼저 검색을 해주셔야 추가 결과를 보여드릴 수 있어요."}
-        
-        start = chat_session["shown_count"]
-        end = start + 3
-        next_pages = chat_session["last_results"][start:end]
-        
-        if not next_pages:
-            return {"answer": "더 이상 보여드릴 결과가 없어요."}
-        
-        chat_session["shown_count"] = end
-        total = len(chat_session["last_results"])
-        return {"answer": format_notion_results(next_pages, total, start)}
+def chat_with_bot(chat_request: ChatRequest):
+    question = chat_request.question.strip()
+    chat_history = chat_request.chat_history
+    logger.info(f"📩 받은 질문: {question}")
 
-    # 2. 새로운 검색 처리
-    if not extracted_info or not any(v for k, v in extracted_info.items() if k != 'intent'):
-        return {"answer": "죄송해요, 질문을 잘 이해하지 못했어요. 나이, 대상 특성 등을 포함해서 다시 질문해주시겠어요?"}
-        
-    filters = []
-    if extracted_info.get("age") is not None: filters.extend(process_age_filter(extracted_info["age"]))
-    if extracted_info.get("category"): filters.append({"property": NOTION_PROPERTY_NAMES["category"], "select": {"equals": extracted_info["category"]}})
-    if extracted_info.get("sub_category"): filters.append({"property": NOTION_PROPERTY_NAMES["sub_category"], "multi_select": {"contains": extracted_info["sub_category"]}})
+    if not notion: raise HTTPException(status_code=503, detail="Notion API Key 설정 오류")
+
+    normalized_input = question.strip().lower()
+
+    # 1. AI 의도 분석
+    try:
+        extracted_info = extract_info_from_question(question, chat_history)
+        if extracted_info.get("error"):
+             logger.error(f"Intent Error: {extracted_info['error']}")
+             raise HTTPException(status_code=500, detail=extracted_info["error"])
+    except Exception as e:
+        logger.error(f"질문 분석 예외: {e}")
+        raise HTTPException(status_code=500, detail=f"질문 분석 중 오류: {e}")
+
+    # 2. 안전 및 기본 의도 처리
+    intent = extracted_info.get("intent")
+
+    if intent == "safety_block":
+        return {"status": "complete", "answer": "비속어는 삼가주세요. 😥 복지 정보에 대해 질문해 주세요.", "last_result_ids": [], "total_found": 0}
     
-    if not filters:
-        return {"answer": "어떤 정보를 찾아드릴까요? 나이, 분류 등 조건을 알려주세요."}
+    if intent == "exit":
+        return {"status": "complete", "answer": "네, 알겠습니다. 언제든 다시 찾아주세요! 😊", "last_result_ids": [], "total_found": 0}
     
-    all_results = []
-    for db_id in DATABASE_IDS.values():
+    if intent == "reset":
+        return {"status": "complete", "answer": "대화를 초기화했습니다. 무엇이 궁금하신가요? 🤖", "last_result_ids": [], "total_found": 0}
+
+    if intent == "out_of_scope":
+        return {"status": "complete", "answer": "저는 도봉구 영유아 복지 정보만 알려드릴 수 있어요. 😅", "last_result_ids": [], "total_found": 0}
+
+    if intent == "small_talk":
+        answer = "안녕하세요! 도봉구 영유아 복지 챗봇입니다. 무엇을 도와드릴까요?"
+        if "고마" in normalized_input or "감사" in normalized_input: 
+            answer = "도움이 되어 기쁩니다! 😊 언제든 또 물어봐 주세요."
+        return {"status": "complete", "answer": answer, "last_result_ids": [], "total_found": 0}
+
+    if intent == "clarify_category":
+        age_info = extracted_info.get("age")
+        age_text = f"{age_info}개월 아기" if age_info else "자녀"
+        return {
+            "status": "clarify", 
+            "answer": f"{age_text}를 위한 어떤 정보가 궁금하신가요?", 
+            "options": list(DATABASE_IDS.keys()), 
+            "last_result_ids": [], 
+            "total_found": 0
+        }
+
+    # 3. '더 보기' 처리
+    show_more_keywords = ["더", "다음", "계속", "more", "next"]
+    is_show_more = (any(k in normalized_input for k in show_more_keywords) or intent == "show_more")
+    
+    if is_show_more and chat_request.last_result_ids:
+        logger.info("[API] '더 보기' 요청 처리")
         try:
-            response = notion.databases.query(database_id=db_id, filter={"and": filters})
-            all_results.extend(response.get("results", []))
-        except Exception as e: print(f"Error searching database {db_id}: {e}")
-    
-    if not all_results:
-        return {"answer": "요청하신 조건에 맞는 정보를 찾지 못했어요."}
+            start = chat_request.shown_count
+            end = start + 2
+            target_ids = chat_request.last_result_ids[start:end]
+            
+            if not target_ids:
+                return {
+                    "status": "complete", 
+                    "answer": "더 이상 표시할 결과가 없습니다.", 
+                    "last_result_ids": chat_request.last_result_ids, 
+                    "total_found": len(chat_request.last_result_ids),
+                    "shown_count": chat_request.shown_count
+                }
 
-    # 세션 상태 초기화 및 첫 결과 반환
-    chat_session["last_results"] = all_results
-    chat_session["shown_count"] = 3
-    total = len(all_results)
-    
-    return {"answer": format_notion_results(all_results[:3], total, 0)}
+            next_pages = get_supabase_pages_by_ids(target_ids)
+            formatted_body = format_search_results(next_pages)
+            
+            header = f"🔎 **추가 정보 ({start+1}~{start+len(next_pages)}번째)**"
+            answer_text = f"{header}\n\n<hr>\n\n{formatted_body}"
+            
+            remaining = len(chat_request.last_result_ids) - end
+            if remaining > 0:
+                answer_text += f"\n\n<hr>\n\n🔍 **아직 결과가 더 남아있습니다.**\n'더 보여줘' 또는 '다음'을 입력해 보세요."
+            else:
+                answer_text += "\n\n<hr>\n\n✅ **모든 결과를 확인했습니다.**"
+
+            return {
+                "status": "complete", 
+                "answer": answer_text, 
+                "last_result_ids": chat_request.last_result_ids,
+                "total_found": len(chat_request.last_result_ids),
+                "shown_count": end 
+            }
+        except Exception as e:
+            logger.error(f"❌ 더 보기 처리 오류: {e}")
+            return {"status": "error", "answer": "추가 정보를 불러오는 중 오류가 발생했습니다."}
+
+    # 4. 일반 검색
+    try:
+        cached_data = redis_client.hget(MAIN_ANSWER_CACHE_KEY, question)
+        if cached_data:
+            logger.info(f"✅ [API] Cache Hit!")
+            return json.loads(cached_data.decode('utf-8'))
+    except Exception: pass
+
+    logger.info("[API] Cache Miss. Job 생성.")
+    try: 
+        job_id = str(uuid.uuid4())
+        job_data = {
+            "job_id": job_id, 
+            "question": question, 
+            "chat_history": chat_history
+        }
+        redis_client.rpush(JOB_QUEUE_KEY, json.dumps(job_data, ensure_ascii=False).encode('utf-8'))
+        return {"message": "요청 접수 완료.", "job_id": job_id}
+    except Exception as e: 
+        logger.error(f"Job 생성 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"Job 생성 오류: {e}")
+
+@app.get("/get_result/{job_id}")
+def get_job_result(job_id: str):
+    try:
+        result_bytes = redis_client.hget(JOB_RESULTS_KEY, job_id)
+        if result_bytes:
+            return json.loads(result_bytes.decode('utf-8'))
+        else:
+            return {"status": "pending"}
+    except Exception as e: 
+        raise HTTPException(status_code=500, detail=f"오류: {e}")
+
+# [삭제됨] /feedback 엔드포인트 삭제
+# 이제 프론트엔드에서 Google Form 링크(<a> 태그)를 직접 띄우면 됩니다.
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

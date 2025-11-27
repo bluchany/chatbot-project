@@ -1,0 +1,98 @@
+# version: '3.8'
+# 우리가 실행할 서비스(컨테이너) 목록 정의
+services:
+  
+  # --- 1. FastAPI 챗봇 서버 ---
+  chatbot_api:
+    # 'build: .'는 현재 폴더(.)에 있는 'Dockerfile'을 찾아
+    # 이미지를 만들라는 의미입니다.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # (이미지 이름은 관리를 위해 추가할 수 있습니다)
+    image: chatbot-api-image
+    
+    # 이 서비스가 비정상 종료되거나 서버(VM)가 재부팅되면 Docker가 자동으로 재시작
+    restart: always 
+
+    # [★신규★] DNS 설정 추가 (들여쓰기 주의!)
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    
+    # .env 파일을 컨테이너 내부로 로드하여 main.py가 os.getenv()를 쓸 수 있게 함
+    env_file:
+      - .env 
+    
+    environment:
+      # main.py의 redis_client가 접속할 호스트 이름
+      # Docker 네트워크 내부에서는 'localhost' 대신 서비스 이름인 'redis_cache'를 사용
+      - REDIS_HOST=redis_cache 
+    
+    # 포트 연결
+    # "80:8000" -> OCI 서버(VM)의 80번 포트(HTTP 기본)로 오는 모든 요청을
+    #              이 컨테이너의 8000번 포트(Gunicorn)로 전달
+    ports:
+      - "8080:8000"
+      
+    volumes: # [★신규★] volumes 섹션 추가
+      - ./chroma-data:/app/chroma-data # <-- [★신규★] 이 줄을 추가합니다.
+    
+    # 'depends_on' -> 'chatbot_api'를 실행하기 전에 'redis_cache'를 먼저 실행
+    depends_on:
+      - redis_cache
+
+  chatbot_worker:
+    image: chatbot-api-image
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis_cache
+      - PYTHONUNBUFFERED=1  # <-- [FIX] 이 줄을 추가하세요!
+    command: ["python", "worker.py"]
+    volumes: # [★신규★] volumes 섹션 추가
+      - ./chroma-data:/app/chroma-data # <-- [★신규★] 이 줄을 추가합니다.
+    depends_on:
+      - redis_cache
+  # --- Worker 서비스 추가 끝 ---
+
+  # --- 2. Redis 캐시 서버 ---
+  redis_cache:
+    # 'image: redis:7-alpine' -> Docker Hub에서 공식 Redis 7 (경량) 이미지를 다운로드
+    image: redis:7-alpine
+    
+    # 이 서비스가 비정상 종료되거나 서버(VM)가 재부팅되어도 항상 자동 재시작
+    restart: always 
+    
+    # --- [FIX] 여기부터가 완성된 부분입니다 ---
+    
+    # 2-1. AOF (Append Only File) 영속성 활성화
+    # Redis가 모든 쓰기 작업을 파일에 기록합니다.
+    command: redis-server --appendonly yes
+    
+    # 2-2. 데이터 볼륨 마운트 (가장 중요)
+    # OCI 서버(VM)의 './redis-data' 폴더를
+    # 컨테이너 내부의 '/data' 폴더(AOF 파일 저장 위치)에 연결합니다.
+    # 이렇게 해야 컨테이너를 삭제/재시작해도 캐시가 보존됩니다.
+    volumes:
+      - ./redis-data:/data
+
+# --- [★신규★] 자동 색인(Cron) 서비스 ---
+  indexer:
+    image: chatbot-api-image # (api/worker와 동일한 이미지 재사용)
+    restart: always
+    env_file: # (index.py가 NOTION_KEY를 읽어야 함)
+      - .env
+    volumes:
+      # index.py가 ChromaDB에 써야 하므로 볼륨 마운트
+      - ./chroma-data:/app/chroma-data
+      # 스케줄 파일을 컨테이너 내부에 복사
+      - ./indexer.crontab:/etc/cron.d/chatbot-indexer
+      # 로그 파일을 로컬에서 볼 수 있도록 마운트
+      - ./logs:/app/logs
+    command: >
+      sh -c "chmod 0644 /etc/cron.d/chatbot-indexer && \
+             crontab /etc/cron.d/chatbot-indexer && \
+             cron -f"
+    # (이 서비스는 Notion API와 ChromaDB 볼륨만 필요하므로 depends_on 불필요)

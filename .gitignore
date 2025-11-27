@@ -1,1 +1,20 @@
+.env# --- 보안 필수 (절대 업로드 금지) ---
 .env
+.env.local
+*.key
+secrets.json
+
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# --- Docker & Database ---
+chroma-data/
+indexing_state.json
+dump.rdb
+
+# --- System ---
+.DS_Store

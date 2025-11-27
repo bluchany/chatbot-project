@@ -1,0 +1,22 @@
+{
+    "liveServer.settings.donotShowInfoMsg": true,
+    "liveServer.settings.ignoreFiles": [
+        ".vscode/**",
+        "**/.git/**",
+        "**/.venv/**",
+        "**/__pycache__/**",
+        "**/*.py",
+        "**/*.pyc",
+        "**/Dockerfile",
+        "**/docker-compose.yml",
+        "**/requirements.txt",
+        "**/indexer.crontab",
+        "**/service_account.json",
+        "**/logs/**",
+        "**/chroma-data/**",
+        "**/redis-data/**",
+        "**/.env",
+        "**/*.spec",
+        "**/*.sh"
+    ]
+}

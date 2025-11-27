@@ -1,0 +1,290 @@
+/* 기본 스타일 초기화 */
+body {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    background-color: #f4f7f6;
+    margin: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+
+/* 채팅 컨테이너 */
+.chat-container {
+    width: 100%;
+    max-width: 600px;
+    height: 80vh;
+    background-color: #ffffff;
+    border-radius: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* 헤더 */
+.chat-header {
+    background-color: #f7f7f7;
+    color: #333;
+    padding: 16px;
+    text-align: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    border-bottom: 1px solid #eee;
+}
+.chat-header h2 {
+    margin: 0;
+    font-size: 1.2rem;
+    font-weight: 600;
+}
+
+/* 채팅 메시지 박스 */
+.chat-box {
+    flex-grow: 1;
+    padding: 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    /* gap: 12px; */ /* <-- FIX: 이 줄 삭제 또는 주석 처리 */
+}
+
+/* FIX: 메시지 사이에만 여백 추가 */
+.message + .message {
+    margin-top: 12px;
+}
+/* -------------------------- */
+
+/* 메시지 말풍선 공통 */
+.message {
+    padding: 12px 16px;
+    border-radius: 18px;
+    max-width: 85%;
+    line-height: 1.6;
+    word-wrap: break-word;
+}
+
+/* 챗봇 (assistant) 메시지 */
+.message.assistant {
+    background-color: #f1f3f5;
+    color: #212529;
+    align-self: flex-start;
+    border-bottom-left-radius: 4px;
+    /* white-space: pre-wrap; */ /* <-- FIX: 이 줄 삭제! (Markdown이 처리) */
+}
+
+/* 사용자 (user) 메시지 */
+.message.user {
+    background-color: #0078d4;
+    color: white;
+    align-self: flex-end;
+    border-bottom-right-radius: 4px;
+    max-width: 75%;
+}
+
+/* p 태그 기본 마진 제거 */
+.message p {
+    margin: 0;
+}
+
+/* 로딩 스피너 */
+.spinner {
+    width: 20px; height: 20px;
+    border: 3px solid rgba(0, 0, 0, 0.1);
+    border-top-color: #333;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* FIX: 굵은 글씨 및 가로선, 리스트 스타일 추가 */
+
+/* 챗봇 답변 내의 굵은 글씨 (제목, 소제목) */
+.message.assistant strong {
+    font-weight: 600;
+    color: #000;
+}
+
+/* 챗봇 답변 내의 가로선 스타일 */
+.message.assistant hr {
+    border: none;
+    border-top: 1px solid #ddd;
+    margin: 16px 0;
+}
+
+/* 챗봇 답변 내의 리스트 스타일 (스크린샷 반영) */
+.message.assistant ul {
+    padding-left: 24px; /* 들여쓰기 */
+    margin: 8px 0 0 0;
+    list-style-type: disc; /* 채워진 동그라미 (•) */
+}
+.message.assistant ul ul {
+    list-style-type: circle; /* 비워진 동그라미 (⚬) */
+    margin-top: 5px;
+}
+.message.assistant li {
+    margin-bottom: 5px; /* 항목 간 여백 */
+}
+/* li 태그 안에 <p> 태그가 생성될 경우를 대비 */
+.message.assistant li p {
+    margin: 0;
+}
+/* -------------------------- */
+
+
+/* 입력창 */
+.chat-input-box {
+    display: flex;
+    padding: 16px;
+    border-top: 1px solid #e0e0e0;
+    background-color: #fdfdfd;
+}
+#user-input {
+    flex-grow: 1;
+    border: 1px solid #ccc;
+    border-radius: 20px;
+    padding: 12px 16px;
+    font-size: 1rem;
+    outline: none;
+}
+#user-input:focus { border-color: #0078d4; }
+#send-btn {
+    margin-left: 12px;
+    padding: 12px 20px;
+    border: none;
+    border-radius: 20px;
+    background-color: #0078d4;
+    color: white;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+#send-btn:hover { background-color: #005a9e; }
+
+/* --- '더 보기' 및 '결과 없음' 안내 스타일 --- */
+
+/* 안내 문구 공통 스타일 (p 태그) */
+.message.assistant .more-results,
+.message.assistant .all-results-shown {
+    color: #000000; /* 텍스트 색상을 살짝 연하게 */
+    font-size: 0.95rem; /* 텍스트 크기를 살짝 작게 */
+    margin: 0; /* <p> 태그가 가진 불필요한 위아래 여백 제거 */
+}
+
+/* '더 보기' 아이콘 스타일 */
+.message.assistant .more-results::before {
+    content: '→';   /* ➡️ 이모지 대신 유니코드 화살표 문자 사용 */
+    color: #000000;   /* 아이콘 색상 (테마 파란색) */
+    font-weight: bold;
+    margin-right: 8px; /* 아이콘과 텍스트 사이 간격 */
+    /* 필요시 vertical-align: 1px; 등으로 미세하게 수직 정렬 */
+}
+
+/* '모든 결과' 메시지는 Python에서 넣은 ✅ 이모지를 그대로 사용 */
+.message.assistant .all-results-shown {
+    color: #333;
+}
+
+/* --- 로딩 스피너 및 텍스트 스타일 --- */
+.message.assistant .spinner {
+  display: inline-block; /* 스피너와 텍스트를 같은 줄에 유지 */
+  vertical-align: middle; /* 수직 중간 정렬 */
+  margin-right: 13px; /* 스피너와 텍스트 사이 간격 */
+}
+
+.message.assistant .loading-text {
+  display: inline-block; /* 스피너와 텍스트를 같은 줄에 유지 */
+  vertical-align: middle; /* 수직 중간 정렬 */
+  margin: 0; /* 기본 단락(p) 여백 제거 */
+}
+
+/* --- [추가] 피드백 버튼 스타일 --- */
+
+/* 피드백 전체 컨테이너 */
+.feedback-container {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid #e0e0e0; /* 답변과 구분선 */
+    text-align: center;
+}
+
+/* "도움이 되었나요?" 텍스트 스타일 */
+.feedback-container p {
+    font-size: 0.9rem;
+    color: #555;
+    margin: 0 0 8px 0;
+}
+
+/* 피드백 버튼 (👍/👎) 공통 스타일 */
+/* .feedback-btn을 .feedback-btn-link로 변경 (a 태그 스타일링) */
+.feedback-btn-link {
+    background: none;
+    border: 1px solid #ccc;
+    border-radius: 16px;
+    padding: 4px 10px;
+    font-size: 1.1rem;
+    margin: 0 5px;
+    cursor: pointer;
+    transition: background-color 0.2s, border-color 0.2s;
+    text-decoration: none; /* 링크 밑줄 제거 */
+    color: inherit; /* 부모 색상 상속 */
+}
+
+/* 링크에 마우스 올렸을 때 */
+.feedback-btn-link:hover {
+    background-color: #f0f0f0;
+    border-color: #aaa;
+}
+
+/* 버튼 비활성화 시 (클릭 후) */
+.feedback-btn-link:disabled {
+    opacity: 0.5;
+    cursor: default;
+    background-color: transparent;
+}
+
+/* 피드백 완료 후 "감사합니다" 텍스트 */
+.feedback-thanks {
+    font-size: 0.9rem;
+    color: #0078d4;
+    font-weight: 600;
+    text-align: center;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid #e0e0e0;
+}
+
+/* 피드백 전송 실패 시 */
+.feedback-error {
+    font-size: 0.9rem;
+    color: #d90000; /* 빨간색 오류 텍스트 */
+    text-align: center;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid #e0e0e0;
+}
+
+/* --- [신규] Clarify (되묻기) 버튼 스타일 --- */
+.button-container {
+    display: flex;
+    flex-wrap: wrap; /* 버튼이 많으면 다음 줄로 */
+    gap: 8px; /* 버튼 사이 간격 */
+    padding: 10px 15px;
+    justify-content: center; /* 버튼 중앙 정렬 */
+}
+
+.clarify-btn {
+    padding: 8px 15px;
+    font-size: 14px;
+    color: #007bff;
+    background-color: #ffffff;
+    border: 1px solid #007bff;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.clarify-btn:hover {
+    background-color: #007bff;
+    color: #ffffff;
+}
