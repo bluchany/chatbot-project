@@ -1,0 +1,20 @@
+{
+  "name": "도봉구 영유아 복지",
+  "short_name": "복지탐색기",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFFFFF",
+  "theme_color": "#FFFFFF",
+  "icons": [
+    {
+      "src": "/static/header-icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/static/header-icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
